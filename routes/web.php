@@ -1,19 +1,31 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Http\Request;
+use App\Http\Controllers\SpaController;
 
-/*
-|--------------------------------------------------------------------------
-| Web Routes
-|--------------------------------------------------------------------------
-*/
+// SPA (semua non-API render React)
+Route::get('/', [SpaController::class, 'index']);
+Route::get('/{any}', [SpaController::class, 'index'])->where('any', '^(?!api|storage).*$');
 
-// Main application route
-Route::get('/', function () {
-    return view('app');
-})->name('home');
+// Session endpoints (Sanctum SPA)
+Route::get('/login', fn() => response()->json(['message' => 'Unauthenticated'], 401))
+    ->name('login');
+Route::post('/login', function (Request $request) {
+    $request->validate(['email' => ['required', 'email'], 'password' => ['required']]);
 
-// Catch-all route untuk React Router (jika nanti digunakan)
-Route::get('/{any}', function () {
-    return view('app');
-})->where('any', '.*');
+    if (!Auth::attempt($request->only('email', 'password'), $request->boolean('remember'))) {
+        return response()->json(['message' => 'Email atau password salah'], 422);
+    }
+
+    $request->session()->regenerate();
+    return response()->json(['message' => 'OK']);
+});
+
+Route::post('/logout', function (Request $request) {
+    Auth::guard('web')->logout();
+    $request->session()->invalidate();
+    $request->session()->regenerateToken();
+    return response()->json(['message' => 'OK']);
+});

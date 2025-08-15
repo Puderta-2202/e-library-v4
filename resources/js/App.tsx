@@ -1,331 +1,167 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import LoginPage from "./components/LoginPage";
 import Dashboard from "./components/Dashboard";
-import BidangView from "./components/BidangView";
 import RakView from "./components/RakView";
+import DocumentList from "./components/DocumentList";
 
-type ViewState = "login" | "dashboard" | "bidang" | "rak";
-
-interface UserSession {
-    role: string;
-    username: string;
-    token?: string;
-}
-
-// Laravel API Base URL - sesuaikan dengan konfigurasi Laravel Anda
-const API_BASE_URL = "/api";
-
-// API utility functions
-const api = {
-    async request(endpoint: string, options: RequestInit = {}) {
-        const token = localStorage.getItem("auth_token");
-        const headers = {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-            ...(token && { Authorization: `Bearer ${token}` }),
-            ...options.headers,
-        };
-
-        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-            ...options,
-            headers,
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        return response.json();
-    },
-
-    // Authentication
-    async login(credentials: {
-        username: string;
-        password: string;
-        role: string;
-    }) {
-        return this.request("/login", {
-            method: "POST",
-            body: JSON.stringify(credentials),
-        });
-    },
-
-    async logout() {
-        return this.request("/logout", { method: "POST" });
-    },
-
-    // Bidang endpoints
-    async getBidangs() {
-        return this.request("/bidangs");
-    },
-
-    async getBidang(id: number) {
-        return this.request(`/bidangs/${id}`);
-    },
-
-    // Rak endpoints
-    async getRaks(bidangId: number) {
-        return this.request(`/bidangs/${bidangId}/raks`);
-    },
-
-    async getRak(id: string) {
-        return this.request(`/raks/${id}`);
-    },
-
-    async createRak(bidangId: number, data: any) {
-        return this.request(`/bidangs/${bidangId}/raks`, {
-            method: "POST",
-            body: JSON.stringify(data),
-        });
-    },
-
-    // Dokumen endpoints
-    async getDokumens(rakId: string) {
-        return this.request(`/raks/${rakId}/dokumens`);
-    },
-
-    async createDokumen(rakId: string, data: any) {
-        return this.request(`/raks/${rakId}/dokumens`, {
-            method: "POST",
-            body: JSON.stringify(data),
-        });
-    },
-
-    async downloadDokumen(id: string) {
-        const token = localStorage.getItem("auth_token");
-        const response = await fetch(
-            `${API_BASE_URL}/dokumens/${id}/download`,
-            {
-                headers: {
-                    ...(token && { Authorization: `Bearer ${token}` }),
-                },
-            }
-        );
-
-        if (!response.ok) {
-            throw new Error("Download failed");
-        }
-
-        return response.blob();
-    },
-};
+type Page = "login" | "dashboard" | "bidang" | "raks" | "documents";
 
 export default function App() {
-    const [currentView, setCurrentView] = useState<ViewState>("login");
-    const [userSession, setUserSession] = useState<UserSession | null>(null);
-    const [selectedBidang, setSelectedBidang] = useState<any>(null);
-    const [selectedRak, setSelectedRak] = useState<any>(null);
-    const [isLoading, setIsLoading] = useState(true);
+    // pakai origin saat ini kalau VITE_API_BASE tidak diset
+    const BASE =
+        (import.meta as any)?.env?.VITE_API_BASE || window.location.origin;
 
-    // Check for existing session on app load
+    const [page, setPage] = useState<Page>("login");
+    const [user, setUser] = useState<any | null>(null);
+    const [checking, setChecking] = useState(true);
+    const [activeBidang, setActiveBidang] = useState<any | null>(null);
+    const [activeRak, setActiveRak] = useState<any | null>(null);
+
+    // normalisasi role dari server
+    const normalizeRole = (u: any) =>
+        (u?.role?.name || u?.role?.nama || u?.role || "")
+            .toString()
+            .toLowerCase();
+
+    // --- CSRF helpers (penting untuk fetch) ---
+    function getXsrfTokenFromCookie() {
+        const m = document.cookie
+            .split("; ")
+            .find((r) => r.startsWith("XSRF-TOKEN="));
+        return m ? decodeURIComponent(m.split("=")[1]) : "";
+    }
+    async function fetchWithXsrf(url: string, init: RequestInit = {}) {
+        const xsrf = getXsrfTokenFromCookie();
+        const headers = new Headers(init.headers || {});
+        headers.set("Accept", "application/json"); // ✅
+        headers.set("Content-Type", "application/json");
+        if (xsrf) headers.set("X-XSRF-TOKEN", xsrf);
+        return fetch(url, { credentials: "include", ...init, headers });
+    }
+
+    // helper aman JSON
+    async function getJSON(url: string, init: RequestInit = {}) {
+        const headers = new Headers(init.headers || {});
+        headers.set("Accept", "application/json"); // ✅ penting
+        const res = await fetch(url, {
+            credentials: "include",
+            ...init,
+            headers,
+        });
+        const ct = res.headers.get("content-type") || "";
+        if (!res.ok) {
+            const text = await res.text();
+            throw new Error(
+                `HTTP ${res.status} ${url}: ${text.slice(0, 120)}…`
+            );
+        }
+        if (!ct.includes("application/json")) {
+            const text = await res.text();
+            throw new Error(`Non-JSON from ${url}: ${text.slice(0, 120)}…`);
+        }
+        return res.json();
+    }
+
+    const fetchMe = () => getJSON(`${BASE}/api/user`);
+
+    // arahkan halaman berdasarkan role
+    function routeByRole(role: string) {
+        setPage(role === "admin" ? "dashboard" : "bidang");
+    }
+
+    // cek sesi saat load
     useEffect(() => {
-        const checkAuthStatus = async () => {
-            const token = localStorage.getItem("auth_token");
-            const userData = localStorage.getItem("user_data");
-
-            if (token && userData) {
-                try {
-                    const user = JSON.parse(userData);
-                    setUserSession({ ...user, token });
-                    setCurrentView("dashboard");
-                } catch (error) {
-                    console.error("Error parsing stored user data:", error);
-                    localStorage.removeItem("auth_token");
-                    localStorage.removeItem("user_data");
-                }
+        (async () => {
+            try {
+                const me = await fetchMe();
+                setUser(me);
+                routeByRole(normalizeRole(me));
+            } catch {
+                setPage("login");
+            } finally {
+                setChecking(false);
             }
-            setIsLoading(false);
-        };
-
-        checkAuthStatus();
+        })();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const handleLogin = async (
-        role: string,
-        username: string,
-        password: string
-    ) => {
-        try {
-            setIsLoading(true);
+    // dipanggil dari LoginPage
+    async function handleLogin(email: string, password: string) {
+        // 1) ambil CSRF cookie
+        await fetch(`${BASE}/sanctum/csrf-cookie`, { credentials: "include" });
 
-            // Untuk development, gunakan mock authentication
-            // Ganti dengan panggilan API sebenarnya ketika Laravel backend sudah ready
-            if (
-                (role === "admin" &&
-                    username === "admin" &&
-                    password === "admin123") ||
-                (role === "pegawai" &&
-                    username === "pegawai" &&
-                    password === "pegawai123")
-            ) {
-                // Mock response dari Laravel API
-                const mockResponse = {
-                    user: { id: 1, name: username, role },
-                    token: "mock-jwt-token-" + Date.now(),
-                };
-
-                // Simpan session
-                localStorage.setItem("auth_token", mockResponse.token);
-                localStorage.setItem(
-                    "user_data",
-                    JSON.stringify(mockResponse.user)
-                );
-
-                setUserSession({
-                    role: mockResponse.user.role,
-                    username: mockResponse.user.name,
-                    token: mockResponse.token,
-                });
-                setCurrentView("dashboard");
-            } else {
-                throw new Error("Invalid credentials");
-            }
-
-            // Uncomment ini ketika Laravel API sudah ready:
-            /*
-      const response = await api.login({ username, password, role });
-      
-      localStorage.setItem('auth_token', response.token);
-      localStorage.setItem('user_data', JSON.stringify(response.user));
-      
-      setUserSession({ 
-        role: response.user.role, 
-        username: response.user.name,
-        token: response.token 
-      });
-      setCurrentView('dashboard');
-      */
-        } catch (error) {
-            console.error("Login error:", error);
-            throw error;
-        } finally {
-            setIsLoading(false);
+        // 2) login (HARUS kirim X-XSRF-TOKEN di header)
+        const res = await fetchWithXsrf(`${BASE}/login`, {
+            method: "POST",
+            body: JSON.stringify({ email, password }),
+        });
+        if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            throw new Error(j.message || "Login gagal");
         }
-    };
 
-    const handleLogout = async () => {
-        try {
-            // Panggil API logout jika tersedia
-            // await api.logout();
+        // 3) ambil profil & arahkan
+        const me = await fetchMe();
+        if (!me) throw new Error("Gagal mengambil profil");
+        setUser(me);
+        routeByRole(normalizeRole(me));
+    }
 
-            localStorage.removeItem("auth_token");
-            localStorage.removeItem("user_data");
-            setUserSession(null);
-            setSelectedBidang(null);
-            setSelectedRak(null);
-            setCurrentView("login");
-        } catch (error) {
-            console.error("Logout error:", error);
-            // Tetap logout meskipun API call gagal
-            localStorage.removeItem("auth_token");
-            localStorage.removeItem("user_data");
-            setUserSession(null);
-            setSelectedBidang(null);
-            setSelectedRak(null);
-            setCurrentView("login");
-        }
-    };
+    async function handleLogout() {
+        await fetchWithXsrf(`${BASE}/logout`, { method: "POST" });
+        setUser(null);
+        setPage("login");
+    }
 
-    const handleSelectBidang = async (bidang: any) => {
-        try {
-            setIsLoading(true);
-            // Load data bidang dari API jika perlu
-            // const bidangData = await api.getBidang(bidang.id);
-            setSelectedBidang(bidang);
-            setCurrentView("bidang");
-        } catch (error) {
-            console.error("Error selecting bidang:", error);
-            setSelectedBidang(bidang);
-            setCurrentView("bidang");
-        } finally {
-            setIsLoading(false);
-        }
-    };
+    if (checking) return <div className="p-6">Memeriksa sesi…</div>;
 
-    const handleSelectRak = async (rak: any) => {
-        try {
-            setIsLoading(true);
-            // Load data rak dari API jika perlu
-            // const rakData = await api.getRak(rak.id);
-            setSelectedRak(rak);
-            setCurrentView("rak");
-        } catch (error) {
-            console.error("Error selecting rak:", error);
-            setSelectedRak(rak);
-            setCurrentView("rak");
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const handleBackToDashboard = () => {
-        setSelectedBidang(null);
-        setSelectedRak(null);
-        setCurrentView("dashboard");
-    };
-
-    const handleBackToBidang = () => {
-        setSelectedRak(null);
-        setCurrentView("bidang");
-    };
-
-    // Loading state
-    if (isLoading) {
+    if (page === "dashboard" && user) {
         return (
-            <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-green-600 mx-auto mb-4"></div>
-                    <p className="text-gray-600">Memuat...</p>
-                </div>
-            </div>
+            <Dashboard
+                role="admin"
+                username={user.name || user.email}
+                onLogout={handleLogout}
+                onSelectBidang={(b) => console.log("selected bidang:", b)}
+            />
         );
     }
 
-    // Render halaman login jika belum login
-    if (currentView === "login" || !userSession) {
-        return <LoginPage onLogin={handleLogin} />;
+    if (page === "bidang" && user) {
+        return (
+            <Dashboard
+                role="pegawai"
+                username={user.name || user.email}
+                onLogout={handleLogout}
+                onSelectBidang={(b) => {
+                    setActiveBidang(b);
+                    setPage("raks");
+                }}
+            />
+        );
     }
 
-    // Render view yang sesuai berdasarkan state
-    switch (currentView) {
-        case "dashboard":
-            return (
-                <Dashboard
-                    role={userSession.role}
-                    username={userSession.username}
-                    onLogout={handleLogout}
-                    onSelectBidang={handleSelectBidang}
-                />
-            );
-
-        case "bidang":
-            return (
-                <BidangView
-                    bidang={selectedBidang}
-                    role={userSession.role}
-                    onBack={handleBackToDashboard}
-                    onSelectRak={handleSelectRak}
-                />
-            );
-
-        case "rak":
-            return (
-                <RakView
-                    rak={selectedRak}
-                    bidang={selectedBidang}
-                    role={userSession.role}
-                    onBack={handleBackToBidang}
-                />
-            );
-
-        default:
-            return (
-                <Dashboard
-                    role={userSession.role}
-                    username={userSession.username}
-                    onLogout={handleLogout}
-                    onSelectBidang={handleSelectBidang}
-                />
-            );
+    if (page === "raks" && user && activeBidang) {
+        return (
+            <RakView
+                bidang={activeBidang}
+                onBack={() => setPage("bidang")}
+                onOpenRak={(rak) => {
+                    setActiveRak(rak);
+                    setPage("documents");
+                }}
+            />
+        );
     }
+
+    if (page === "documents" && user && activeBidang && activeRak) {
+        return (
+            <DocumentList
+                bidang={activeBidang}
+                rak={activeRak}
+                onBack={() => setPage("raks")}
+            />
+        );
+    }
+
+    return <LoginPage onLogin={handleLogin} />;
 }

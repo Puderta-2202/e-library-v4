@@ -1,31 +1,17 @@
 import React, { useState } from "react";
-import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
-} from "./ui/card";
+import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "./ui/select";
 import { AlertCircle, BookOpen } from "lucide-react";
 
 interface LoginPageProps {
-    onLogin: (role: string, username: string, password: string) => void;
+    onLogin: (email: string, password: string) => void; // ← pakai email
 }
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
-    const [username, setUsername] = useState("");
+    const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-    const [role, setRole] = useState("");
     const [error, setError] = useState("");
     const [isLoading, setIsLoading] = useState(false);
 
@@ -33,16 +19,22 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         e.preventDefault();
         setError("");
 
-        if (!username || !password || !role) {
-            setError("Semua field harus diisi");
+        if (!email || !password) {
+            setError("Email dan password harus diisi");
+            return;
+        }
+        // validasi sederhana email
+        const okEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+        if (!okEmail) {
+            setError("Format email tidak valid");
             return;
         }
 
         try {
             setIsLoading(true);
-            await onLogin(role, username, password);
+            await onLogin(email, password); // ← kirim email ke parent
         } catch (error) {
-            setError("Username atau password salah");
+            setError("Email atau password salah");
         } finally {
             setIsLoading(false);
         }
@@ -66,45 +58,18 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 </div>
 
                 <Card>
-                    <CardHeader>
-                        <CardTitle>Login</CardTitle>
-                        <CardDescription>
-                            Masuk ke sistem dengan akun Anda
-                        </CardDescription>
-                    </CardHeader>
                     <CardContent>
                         <form onSubmit={handleSubmit} className="space-y-4">
                             <div className="space-y-2">
-                                <Label htmlFor="role">Role</Label>
-                                <Select
-                                    value={role}
-                                    onValueChange={setRole}
-                                    disabled={isLoading}
-                                >
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Pilih role" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="admin">
-                                            Administrator
-                                        </SelectItem>
-                                        <SelectItem value="pegawai">
-                                            Pegawai
-                                        </SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-
-                            <div className="space-y-2">
-                                <Label htmlFor="username">Username</Label>
+                                <Label htmlFor="email">Email</Label>
                                 <Input
-                                    id="username"
-                                    type="text"
-                                    value={username}
-                                    onChange={(e) =>
-                                        setUsername(e.target.value)
-                                    }
-                                    placeholder="Masukkan username"
+                                    id="email"
+                                    type="email"
+                                    inputMode="email"
+                                    autoComplete="email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    placeholder="you@example.com"
                                     disabled={isLoading}
                                 />
                             </div>
@@ -114,6 +79,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                                 <Input
                                     id="password"
                                     type="password"
+                                    autoComplete="current-password"
                                     value={password}
                                     onChange={(e) =>
                                         setPassword(e.target.value)
@@ -132,13 +98,32 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
                             <Button
                                 type="submit"
-                                className="w-full"
+                                className="w-full bg-gradient-to-r from-green-500 to-blue-500 hover:from-green-600 hover:to-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md transform transition-all duration-200 hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
                                 disabled={isLoading}
                             >
                                 {isLoading ? (
                                     <>
-                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-black mr-2"></div>
-                                        Memproses...
+                                        <svg
+                                            className="animate-spin h-5 w-5 mr-2 text-white"
+                                            xmlns="http://www.w3.org/2000/svg"
+                                            fill="none"
+                                            viewBox="0 0 24 24"
+                                        >
+                                            <circle
+                                                className="opacity-25"
+                                                cx="12"
+                                                cy="12"
+                                                r="10"
+                                                stroke="currentColor"
+                                                strokeWidth="4"
+                                            ></circle>
+                                            <path
+                                                className="opacity-75"
+                                                fill="currentColor"
+                                                d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                                            ></path>
+                                        </svg>
+                                        Loading
                                     </>
                                 ) : (
                                     "Masuk"
